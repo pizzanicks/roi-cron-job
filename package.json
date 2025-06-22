@@ -1,0 +1,27 @@
+{
+  "name": "roi-cron-job",
+  "version": "1.0.0",
+  "main": "index.js",
+ "scripts": {
+    "start": "node index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },    
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pizzanicks/roi-cron-job.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/pizzanicks/roi-cron-job/issues"
+  },
+  "homepage": "https://github.com/pizzanicks/roi-cron-job#readme",
+  "description": "",
+  "dependencies": {
+    "dayjs": "^1.11.13",
+    "firebase-admin": "^13.4.0",
+    "google-auth-library": "^10.1.0",
+    "node-cron": "^4.1.1"
+  }
+}
