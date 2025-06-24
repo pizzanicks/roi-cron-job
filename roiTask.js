@@ -1,3 +1,5 @@
+// roiTask.js
+
 const cron = require('node-cron');
 const admin = require('firebase-admin');
 const dayjs = require('dayjs');
@@ -7,7 +9,7 @@ console.log('🚀 Starting ROI Cron Script...');
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
-  projectId: 'rosnept'
+  projectId: 'rosnept',
 });
 
 console.log('✅ Firebase Admin Initialized');
@@ -26,24 +28,39 @@ async function runRoiTaskNow() {
 
       const plan = user.activePlan;
 
-      if (plan?.isActive && plan?.daysCompleted < 7) {
+      // ✅ Skip if no plan or not active
+      if (!plan?.isActive || !plan?.status || plan?.status !== 'active') {
+        console.log(`⏭️ Skipping ${doc.id} - plan is not active`);
+        continue;
+      }
+
+      // ✅ Only run if less than 7 days completed
+      if (plan.daysCompleted < 7) {
         const roiAmount = plan.amount * plan.roiPercent;
         const today = dayjs().format('YYYY-MM-DD');
 
-        await userRef.update({
+        // ✅ Calculate updates
+        const updates = {
           walletBal: admin.firestore.FieldValue.increment(roiAmount),
           'activePlan.daysCompleted': admin.firestore.FieldValue.increment(1),
           payoutLogs: admin.firestore.FieldValue.arrayUnion({
             date: today,
             amount: roiAmount,
-            status: 'paid'
+            status: 'paid',
           }),
-          ...(plan.daysCompleted + 1 >= 7 && {
-            'activePlan.isActive': false
-          })
-        });
+        };
+
+        // ✅ Mark plan as inactive and completed after day 7
+        if (plan.daysCompleted + 1 >= 7) {
+          updates['activePlan.isActive'] = false;
+          updates['activePlan.status'] = 'completed';
+        }
+
+        await userRef.update(updates);
 
         console.log(`✅ Paid ${roiAmount} to ${doc.id} (${plan.planName})`);
+      } else {
+        console.log(`🛑 Skipping ${doc.id} - already completed 7 days`);
       }
     }
 
@@ -53,8 +70,8 @@ async function runRoiTaskNow() {
   }
 }
 
-// TEMP: Run now
+// Run immediately (manual testing)
 runRoiTaskNow();
 
-// Enable daily at 2AM later
+// For daily automation on Render
 // cron.schedule('0 2 * * *', runRoiTaskNow);
