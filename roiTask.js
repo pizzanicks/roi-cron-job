@@ -4,14 +4,11 @@ const cron = require('node-cron');
 const admin = require('firebase-admin');
 const dayjs = require('dayjs');
 const serviceAccount = require('./serviceAccountKey.json');
-
-console.log('🚀 Starting ROI Cron Script...');
-
+// ... later in the code ...
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
   projectId: 'rosnept',
 });
-
 console.log('✅ Firebase Admin Initialized');
 
 const db = admin.firestore();
