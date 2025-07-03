@@ -9,15 +9,26 @@ const dayjs = require('dayjs');
 let serviceAccount;
 
 try {
-  if (!process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
-    throw new Error('❌ FIREBASE_SERVICE_ACCOUNT_KEY is not set in environment variables!');
+  // We are now expecting the Base64 encoded key: FIREBASE_SERVICE_ACCOUNT_KEY_BASE64
+  const serviceAccountBase64 = process.env.FIREBASE_SERVICE_ACCOUNT_KEY_BASE64;
+
+  // Debugging line to see what's actually in the environment variable
+  console.log('DEBUG: Raw FIREBASE_SERVICE_ACCOUNT_KEY_BASE64 from process.env:', serviceAccountBase64 ? 'Value is present' : 'Value is undefined/empty');
+
+  if (!serviceAccountBase64) {
+    throw new Error('❌ FIREBASE_SERVICE_ACCOUNT_KEY_BASE64 environment variable is not set or is empty!');
   }
 
-  serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
-  console.log("✅ Firebase service account loaded successfully.");
+  // Decode the Base64 string back into a JSON string, then parse it.
+  serviceAccount = JSON.parse(Buffer.from(serviceAccountBase64, 'base64').toString('utf8'));
+  console.log("✅ Firebase service account loaded successfully from Base64.");
+
 } catch (error) {
+  // If parsing fails, log the specific JSON error
   console.error("❌ Failed to load Firebase service account:", error.message);
-  process.exit(1); // Exit the script to prevent errors later
+  // Log the full error stack for more details on what went wrong with parsing
+  console.error("❌ Full error details during service account loading:", error);
+  process.exit(1); // Exit the script to prevent further errors
 }
 
 console.log('🚀 Starting ROI Cron Script...');
