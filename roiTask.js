@@ -24,18 +24,16 @@ try {
   console.log("✅ Firebase service account loaded successfully from Base64.");
 
 } catch (error) {
-  // If parsing fails, log the specific JSON error
   console.error("❌ Failed to load Firebase service account:", error.message);
-  // Log the full error stack for more details on what went wrong with parsing
   console.error("❌ Full error details during service account loading:", error);
-  process.exit(1); // Exit the script to prevent further errors
+  process.exit(1); // Stop the script if Firebase fails to initialize
 }
 
 console.log('🚀 Starting ROI Cron Script...');
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
-  projectId: 'rosnept',
+  // Removed redundant projectId (already inside the serviceAccount JSON)
 });
 
 console.log('✅ Firebase Admin Initialized');
@@ -60,8 +58,13 @@ async function runRoiTaskNow() {
         continue;
       }
 
-      if (plan.daysCompleted < 7) {
-        const roiAmount = plan.amount * (plan.roiPercent || 0); // ensure fallback
+      if ((plan.daysCompleted ?? 0) < 7) {
+        const roiAmount = (plan.amount ?? 0) * (plan.roiPercent ?? 0);
+        
+        if (plan.amount == null || plan.roiPercent == null) {
+          console.warn(`⚠️ Missing amount or roiPercent for user ${doc.id}`);
+        }
+
         const today = dayjs().format('YYYY-MM-DD');
 
         const updates = {
@@ -74,14 +77,14 @@ async function runRoiTaskNow() {
           }),
         };
 
-        if (plan.daysCompleted + 1 >= 7) {
+        if ((plan.daysCompleted ?? 0) + 1 >= 7) {
           updates['activePlan.isActive'] = false;
           updates['activePlan.status'] = 'completed';
           console.log(`🎉 Plan for user ${doc.id} completed and marked inactive.`);
         }
 
         await userRef.update(updates);
-        console.log(`✅ Paid ${roiAmount} to user ${doc.id} (Plan: ${plan.planName || 'Unnamed'}). Days: ${plan.daysCompleted + 1}`);
+        console.log(`✅ Paid ${roiAmount} to user ${doc.id} (Plan: ${plan.planName || 'Unnamed'}). Days: ${(plan.daysCompleted ?? 0) + 1}`);
       } else {
         console.log(`🛑 Skipping user ${doc.id} - plan already completed ${plan.daysCompleted} days.`);
 
