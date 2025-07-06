@@ -1,7 +1,7 @@
-// roiTask.js
+// roiTask.js (Updated Version)
 
 const admin = require('firebase-admin');
-const dayjs = require('dayjs'); // dayjs is good for date formatting
+const dayjs = require('dayjs');
 
 // --- Firebase Admin SDK Initialization ---
 let serviceAccount;
@@ -25,7 +25,7 @@ console.log('🚀 Starting ROI Cron Script...');
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
-  projectId: 'rosnept', // Ensure this is your actual Firebase Project ID
+  projectId: 'rosnept',
 });
 
 console.log('✅ Firebase Admin Initialized');
@@ -41,42 +41,58 @@ async function runRoiTaskNow() {
     console.log(`🔍 Found ${snapshot.docs.length} investment documents to process.`);
 
     for (const doc of snapshot.docs) {
-      const investmentDocData = doc.data(); // This is the INVESTMENT document's data
+      const investmentDocData = doc.data();
       const investmentDocRef = doc.ref;
-      const plan = investmentDocData.activePlan;
+      const plan = investmentDocData.activePlan; // Access the activePlan map
 
       const userId = investmentDocData.userId;
       if (!userId) {
         console.warn(`⚠️ Skipping investment ${doc.id} - No userId found in the document.`);
         continue;
       }
-      const userProfileRef = db.collection('USERS').doc(userId); // Reference to the actual USER document
+      const userProfileRef = db.collection('USERS').doc(userId);
 
-      // --- FIX 1: Corrected Filtering Logic ---
-      // We check if:
-      // 1. The top-level 'hasActivePlan' is true.
-      // 2. The 'activePlan' map exists and its 'isActive' field is true.
-      // (Removed checks for `plan.status` and `plan.action` which don't exist as expected)
-      if (!investmentDocData.hasActivePlan || !plan?.isActive) {
-          console.log(`⏸️ Skipping user ${userId} (Investment: ${doc.id}) - Plan is not generally active (hasActivePlan: ${investmentDocData.hasActivePlan}) or activePlan.isActive: ${plan?.isActive}.`);
-          continue;
-      }
-
-      // It's also good practice to ensure 'plan' itself is an object if it might be missing
+      // Ensure 'plan' exists and is an object before proceeding
       if (!plan || typeof plan !== 'object') {
           console.warn(`⚠️ Skipping user ${userId} (Investment: ${doc.id}) - activePlan is missing or malformed.`);
           continue;
       }
 
+      // --- FIX 1 (from last time): Corrected Filtering Logic ---
+      // We check if:
+      // 1. The top-level 'hasActivePlan' is true.
+      // 2. The 'activePlan' map exists (already checked above) and its 'isActive' field is true.
+      if (!investmentDocData.hasActivePlan || !plan.isActive) {
+          console.log(`⏸️ Skipping user ${userId} (Investment: ${doc.id}) - Plan is not generally active (hasActivePlan: ${investmentDocData.hasActivePlan}) or activePlan.isActive: ${plan.isActive}.`);
+          continue;
+      }
 
-      if (plan.daysCompleted < 7) { // Assuming 7 days is the plan duration
-        // --- FIX 2: Parse roiPercent to a number ---
-        const parsedRoiPercent = parseFloat(plan.roiPercent || 0); // Convert string "0.04" to number 0.04
-        const roiAmount = plan.amount * parsedRoiPercent;
+      // --- FIX 3 (NEW!): Robustly get daysCompleted as a number, defaulting to 0 if undefined/null/invalid ---
+      // This will ensure 'currentDaysCompletedInPlan' is always a valid number.
+      const rawDaysCompleted = plan.daysCompleted;
+      let currentDaysCompletedInPlan = 0; // Default to 0
 
-        const today = dayjs().format('YYYY-MM-DD');
-        const newDaysCompleted = plan.daysCompleted + 1; // Now plan.daysCompleted is a number
+      if (typeof rawDaysCompleted === 'number') {
+          currentDaysCompletedInPlan = rawDaysCompleted;
+      } else if (typeof rawDaysCompleted === 'string') {
+          const parsed = parseFloat(rawDaysCompleted);
+          if (!isNaN(parsed)) {
+              currentDaysCompletedInPlan = parsed;
+          }
+      }
+      // If rawDaysCompleted was undefined, null, or a string that couldn't be parsed,
+      // currentDaysCompletedInPlan remains 0.
 
+
+      // --- FIX 2 (from last time): Parse roiPercent to a number ---
+      const parsedRoiPercent = parseFloat(plan.roiPercent || '0'); // Convert string "0.04" to number 0.04
+
+      const roiAmount = plan.amount * parsedRoiPercent;
+      const today = dayjs().format('YYYY-MM-DD');
+
+      // Now use currentDaysCompletedInPlan, which is guaranteed to be a number
+      if (currentDaysCompletedInPlan < 7) {
+        const newDaysCompleted = currentDaysCompletedInPlan + 1;
 
         // --- Updates for the INVESTMENT document ---
         const investmentUpdates = {
@@ -84,73 +100,60 @@ async function runRoiTaskNow() {
           payoutLogs: admin.firestore.FieldValue.arrayUnion({
             date: today,
             amount: roiAmount,
-            status: 'paid', // This status refers to the payout log entry
-            timestamp: admin.firestore.FieldValue.serverTimestamp() // Add a server timestamp for accuracy
+            status: 'paid',
+            timestamp: admin.firestore.FieldValue.serverTimestamp()
           }),
         };
 
         // --- Updates for the USER'S PROFILE (USERS collection) ---
         const userProfileUpdates = {
-          walletBalance: admin.firestore.FieldValue.increment(roiAmount), // Increment user's wallet
-          // These fields will reflect the current active plan's status on the user's profile
-          currentPlanDaysCompleted: newDaysCompleted,
-          currentPlanRoiPercentage: parsedRoiPercent, // Use the parsed number
-          lastRoiPaymentDate: today, // Optional: add a timestamp for last payment
-          // Add/update hasActiveInvestments on the user profile, reflecting the INVESTMENT document's state
-          hasActiveInvestments: investmentDocData.hasActivePlan // Keep consistent with INVESTMENT doc
+          walletBalance: admin.firestore.FieldValue.increment(roiAmount),
+          currentPlanDaysCompleted: newDaysCompleted, // This will now be a number
+          currentPlanRoiPercentage: parsedRoiPercent,
+          lastRoiPaymentDate: today,
+          hasActiveInvestments: investmentDocData.hasActivePlan
         };
 
         if (newDaysCompleted >= 7) {
-          // If you have an 'action' field on the plan that dictates restart vs complete,
-          // make sure it's actually set in your Firestore documents.
-          // Based on your provided document, 'plan.action' is currently undefined.
-          // So, the 'restart' branch below might never be hit unless you add that field.
-          if (plan.action === 'restart') { // If plan.action is ever set to 'restart'
+          if (plan.action === 'restart') {
             investmentUpdates['activePlan.daysCompleted'] = 0;
-            investmentUpdates['activePlan.status'] = 'active'; // This status might be for your internal logic, but not in your doc
+            investmentUpdates['activePlan.status'] = 'active';
             investmentUpdates['activePlan.isActive'] = true;
-            investmentUpdates['activePlan.action'] = 'active'; // Assuming 'action' is a field you plan to use
-
+            investmentUpdates['activePlan.action'] = 'active';
             console.log(`🔁 Restarted plan for user ${userId} (Investment: ${doc.id})`);
 
-            // Also reset user profile fields if the plan restarts
-            userProfileUpdates.currentPlanDaysCompleted = 0; // Reset for user profile
-            userProfileUpdates.hasActiveInvestments = true; // Still active for user profile
-            // userProfileUpdates.currentPlanRoiPercentage remains the same for the new cycle
-          } else { // Default to completing the plan if not set to restart
+            userProfileUpdates.currentPlanDaysCompleted = 0;
+            userProfileUpdates.hasActiveInvestments = true;
+          } else {
             investmentUpdates['activePlan.isActive'] = false;
-            investmentUpdates['activePlan.status'] = 'completed'; // This status might be for your internal logic, but not in your doc
+            investmentUpdates['activePlan.status'] = 'completed';
             console.log(`🎉 Plan for user ${userId} (Investment: ${doc.id}) completed and marked inactive.`);
 
-            // Mark user profile plan details as completed/inactive
-            userProfileUpdates.currentPlanDaysCompleted = newDaysCompleted; // Final days
-            userProfileUpdates.currentPlanRoiPercentage = parsedRoiPercent; // Final ROI percentage
-            userProfileUpdates.hasActiveInvestments = false; // User profile reflects no active investment
+            userProfileUpdates.currentPlanDaysCompleted = newDaysCompleted;
+            userProfileUpdates.currentPlanRoiPercentage = parsedRoiPercent;
+            userProfileUpdates.hasActiveInvestments = false;
           }
         }
 
         // Perform updates on both documents
-        await investmentDocRef.update(investmentUpdates); // Update INVESTMENT document
-        await userProfileRef.update(userProfileUpdates); // Update USERS document
+        await investmentDocRef.update(investmentUpdates);
+        await userProfileRef.update(userProfileUpdates);
 
         console.log(`✅ Paid $${roiAmount.toFixed(2)} to user ${userId} (Plan: ${plan.planName || 'Unnamed'}). Days: ${newDaysCompleted}`);
       } else {
         // This block handles plans that have already reached or exceeded 7 days
-        console.log(`🛑 Skipping user ${userId} (Investment: ${doc.id}) - plan already completed ${plan.daysCompleted} days.`);
+        // We now use currentDaysCompletedInPlan which is guaranteed to be a number
+        console.log(`🛑 Skipping user ${userId} (Investment: ${doc.id}) - plan already completed ${currentDaysCompletedInPlan} days.`);
 
-        // Ensure plans past duration are marked inactive in INVESTMENT and USERS
-        // This 'if' condition here will now actually trigger since plan.isActive is true for your user
-        if (investmentDocData.hasActivePlan || plan.isActive) { // Check both top-level and activePlan status
+        if (investmentDocData.hasActivePlan || plan.isActive) {
           await investmentDocRef.update({
             'activePlan.isActive': false,
-            // 'activePlan.status': 'completed', // You can uncomment if you add this field to activePlan
-            hasActivePlan: false // Also update the top-level flag
+            // 'activePlan.status': 'completed',
+            hasActivePlan: false
           });
-          // Also update user profile if their active plan is now completed
           await userProfileRef.update({
             hasActiveInvestments: false,
-            currentPlanDaysCompleted: plan.daysCompleted, // Final days count
-            // currentPlanRoiPercentage: parsedRoiPercent, // Keep final ROI
+            currentPlanDaysCompleted: currentDaysCompletedInPlan, // This will now be a number
           });
           console.log(`⚠️ Auto-marked user ${userId}'s plan (Investment: ${doc.id}) as completed and updated user profile.`);
         }
